@@ -302,6 +302,20 @@ let lastSaved = 0;
 // Nach manuellem Speichern zählt das Gerät weiter: neue Einheit relativ zu diesem Stand
 let base = null;
 const ZERO = { elapsed: 0, dist: 0, strokes: 0, kcal: 0 };
+// Pausen bis zu dieser Länge (z. B. Trinkpause) gehören noch zur selben Einheit,
+// auch wenn der Ruder-Computer zwischendurch auf null springt oder die Verbindung abreißt
+const MAX_PAUSE_MS = 10 * 60 * 1000;
+
+// Werte der laufenden Einheit: Gerätestand minus Startstand plus Übertrag aus früheren Abschnitten
+function totals() {
+  const b = base ?? ZERO, c = session?.carry ?? ZERO;
+  return {
+    elapsed: Math.max(0, (live.elapsed ?? 0) - b.elapsed) + c.elapsed,
+    dist: Math.max(0, (live.dist ?? 0) - b.dist) + c.dist,
+    strokes: Math.max(0, (live.strokes ?? 0) - b.strokes) + c.strokes,
+    kcal: Math.max(0, (live.kcal ?? 0) - b.kcal) + c.kcal,
+  };
+}
 
 async function saveSession(final) {
   const s = session;
@@ -311,7 +325,7 @@ async function saveSession(final) {
   summarize(s);
   if (s.distance <= 0) return;
   s.synced = false;
-  const { lastElapsed, ...record } = s;
+  const { lastElapsed, carry, movedAt, ...record } = s;
   await db.put(record);
   lastSaved = Date.now();
   if (final) { sync(); refreshViews(); }
@@ -332,21 +346,32 @@ function onRowerData(d) {
   Object.assign(live, d);
   const el = live.elapsed ?? 0;
 
-  // Gerät wurde zurückgesetzt -> laufende Einheit abschließen
-  if (session && el < session.lastElapsed) saveSession(true);
+  // zu lange Pause -> alte Einheit abschließen, ab hier beginnt eine neue
+  if (session && Date.now() - session.movedAt > MAX_PAUSE_MS) finishManually();
+  // Gerät hat seine Zähler zurückgesetzt (passiert nach kurzer Pause) -> Einheit läuft weiter,
+  // bisherige Werte werden als Übertrag auf den neuen Abschnitt aufgeschlagen
   if (base && el < base.elapsed) base = null;
+  if (session && el < session.lastElapsed) {
+    const last = session.samples[session.samples.length - 1];
+    session.carry = last ? { elapsed: last[0], dist: last[1], strokes: last[6], kcal: last[7] } : ZERO;
+    session.lastElapsed = el;
+    base = null;
+  }
   const b = base ?? ZERO;
 
   if (!session && el > b.elapsed && ((live.dist ?? 0) > b.dist || (live.strokes ?? 0) > b.strokes)) {
     session = {
       id: Date.now(), owner: cloud.user?.id ?? null, start: new Date().toISOString(),
       device: device?.name ?? (demoTimer ? "Demo" : null), samples: [], lastElapsed: b.elapsed,
+      carry: ZERO, movedAt: Date.now(),
     };
   }
   if (session && el !== session.lastElapsed) {
     session.lastElapsed = el;
-    session.samples.push([el - b.elapsed, (live.dist ?? 0) - b.dist, live.pace ?? 0, live.spm ?? 0, live.power ?? 0,
-      currentHr(), (live.strokes ?? 0) - b.strokes, (live.kcal ?? 0) - b.kcal]);
+    const t = totals(), prev = session.samples[session.samples.length - 1];
+    if (!prev || t.dist > prev[1] || t.strokes > prev[6]) session.movedAt = Date.now();
+    session.samples.push([t.elapsed, t.dist, live.pace ?? 0, live.spm ?? 0, live.power ?? 0,
+      currentHr(), t.strokes, t.kcal]);
     if (Date.now() - lastSaved > 15000) saveSession(false);
   }
   renderLive();
@@ -370,7 +395,7 @@ function setStatus(state, text) {
   $("btnConnect").disabled = active || !navigator.bluetooth;
   $("btnDemo").disabled = active;
   $("btnDisconnect").disabled = !active;
-  $("btnFinish").disabled = !active;
+  $("btnFinish").disabled = !active && !session;
 }
 
 async function connect() {
@@ -416,9 +441,10 @@ async function onDisconnected() {
   for (let i = 0; i < 5 && device && !userDisconnect; i++) {
     try { await startNotifications(); return; } catch { await new Promise((r) => setTimeout(r, 2000)); }
   }
-  await saveSession(true);
+  // Einheit offen lassen: Nach erneutem Verbinden innerhalb der Pausengrenze geht sie weiter
+  await saveSession(false);
   device = null;
-  setStatus("idle", "Nicht verbunden");
+  setStatus("idle", session ? "Verbindung verloren – neu verbinden, um fortzusetzen" : "Nicht verbunden");
 }
 
 async function disconnect() {
@@ -521,17 +547,15 @@ function startDemo() {
 
 // ================= Live =================
 function renderLive() {
-  const b = base ?? ZERO;
-  const el = Math.max(0, (live.elapsed ?? 0) - b.elapsed), dist = Math.max(0, (live.dist ?? 0) - b.dist);
+  const { elapsed: el, dist, strokes, kcal } = totals();
   $("vPace").textContent = live.spm > 0 ? fmtPace(live.pace) : "–:––";
   $("vAvgPace").textContent = dist > 0 ? fmtPace((el / dist) * 500) : "–:––";
   $("vTime").textContent = fmtTime(el);
   $("vDist").textContent = nf.format(dist);
   $("vSpm").textContent = Math.round(live.spm ?? 0);
   $("vPower").textContent = live.power ?? 0;
-  $("vStrokes").textContent = Math.max(0, (live.strokes ?? 0) - b.strokes);
-  $("vKcal").textContent = Math.max(0, (live.kcal ?? 0) - b.kcal);
-  const strokes = Math.max(0, (live.strokes ?? 0) - b.strokes);
+  $("vStrokes").textContent = strokes;
+  $("vKcal").textContent = kcal;
   $("vMps").textContent = strokes > 0 ? (dist / strokes).toLocaleString("de-DE", { maximumFractionDigits: 1 }) : "–";
   renderHr();
   if (session) setStatus("recording", "Aufzeichnung läuft");
