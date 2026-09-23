@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1a1a19">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Rudern</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Rudern</h1>
+  <div class="status" id="status" data-state="idle"><span class="dot"></span><span id="statusText">Nicht verbunden</span></div>
+  <nav role="tablist">
+    <button role="tab" aria-selected="true" data-view="live">Live</button>
+    <button role="tab" aria-selected="false" data-view="history">Verlauf</button>
+    <button role="tab" aria-selected="false" data-view="trends">Trends</button>
+    <button role="tab" aria-selected="false" data-view="account">Konto</button>
+  </nav>
+</header>
+
+<main>
+  <!-- LIVE -->
+  <section id="view-live">
+    <div id="noBt" class="card warn hidden">
+      <strong>Web Bluetooth ist in diesem Browser nicht verfügbar.</strong><br>
+      Am Laptop Chrome oder Edge verwenden, auf dem iPhone die App „Bluefy“. Der Demo-Modus funktioniert überall.
+    </div>
+
+    <div class="card hero">
+      <div class="label">Split / 500 m</div>
+      <div class="value num" id="vPace">–:––</div>
+      <div class="sub num">Ø <span id="vAvgPace">–:––</span> / 500 m</div>
+    </div>
+
+    <div class="tiles">
+      <div class="card tile"><div class="label">Zeit</div><div class="value num" id="vTime">0:00</div></div>
+      <div class="card tile"><div class="label">Distanz</div><div class="value num"><span id="vDist">0</span><span class="unit">m</span></div></div>
+      <div class="card tile"><div class="label">Schlagfrequenz</div><div class="value num"><span id="vSpm">0</span><span class="unit">spm</span></div></div>
+      <div class="card tile"><div class="label">Leistung</div><div class="value num"><span id="vPower">0</span><span class="unit">W</span></div></div>
+      <div class="card tile"><div class="label">Schläge</div><div class="value num" id="vStrokes">0</div></div>
+      <div class="card tile"><div class="label">Kalorien</div><div class="value num"><span id="vKcal">0</span><span class="unit">kcal</span></div></div>
+      <div class="card tile"><div class="label">Herzfrequenz</div><div class="value num"><span id="vHr">–</span><span class="unit">bpm</span></div></div>
+      <div class="card tile"><div class="label">Widerstand</div><div class="value num" id="vRes">–</div></div>
+    </div>
+
+    <div class="row controls">
+      <button class="btn primary" id="btnConnect">Verbinden</button>
+      <button class="btn" id="btnDemo">Demo</button>
+      <button class="btn" id="btnFinish" disabled>Einheit speichern</button>
+      <button class="btn" id="btnDisconnect" disabled>Trennen</button>
+    </div>
+    <p class="hint" id="hint">Rudergerät einschalten, dann „Verbinden“. Die Aufzeichnung startet automatisch beim ersten Schlag.</p>
+
+    <div class="card chart hidden" id="liveChartWrap">
+      <h3>Split-Verlauf <span>/ 500 m</span></h3>
+      <div id="liveChart"></div>
+    </div>
+  </section>
+
+  <!-- HISTORY -->
+  <section id="view-history" class="hidden">
+    <div id="historyList">
+      <div class="tiles three">
+        <div class="card tile"><div class="label">Einheiten</div><div class="value num" id="tCount">0</div></div>
+        <div class="card tile"><div class="label">Distanz</div><div class="value num"><span id="tDist">0</span><span class="unit">km</span></div></div>
+        <div class="card tile"><div class="label">Zeit</div><div class="value num" id="tTime">0:00</div></div>
+      </div>
+      <div class="card chart" id="histChartWrap">
+        <h3>Distanz pro Einheit <span>m, letzte 30</span></h3>
+        <div id="histChart"></div>
+      </div>
+      <div class="card list" id="sessionList"></div>
+    </div>
+
+    <div id="detail" class="hidden">
+      <button class="btn back" id="btnBack">← Verlauf</button>
+      <div class="detail-head">
+        <h2 id="dTitle"></h2>
+        <div class="row">
+          <button class="btn" id="btnCsv">CSV</button>
+          <button class="btn danger" id="btnDelete">Löschen</button>
+        </div>
+      </div>
+      <div class="tiles" id="dTiles"></div>
+      <p class="hint hidden" id="dNoSamples">Die Messpunkte dieser Einheit liegen nur in der Cloud. Zum Laden online gehen.</p>
+      <div id="dCharts">
+        <div class="card chart"><h3>Split <span>/ 500 m · schneller = oben · 5-s-Mittel</span></h3><div id="dPace"></div></div>
+        <div class="card chart"><h3>Schlagfrequenz <span>spm</span></h3><div id="dSpm"></div></div>
+        <div class="card chart"><h3>Leistung <span>W</span></h3><div id="dPower"></div></div>
+        <div class="card chart hidden" id="dHrWrap"><h3>Herzfrequenz <span>bpm</span></h3><div id="dHr"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TRENDS -->
+  <section id="view-trends" class="hidden">
+    <div id="trendsEmpty" class="card empty hidden">Für Trends braucht es mindestens zwei Einheiten.</div>
+    <div id="trendsBody">
+      <h2 class="sec" style="margin-top:0">Letzte 4 Wochen <span class="muted" style="font-weight:400">vs. 4 Wochen davor</span></h2>
+      <div class="tiles three" id="trendTiles"></div>
+
+      <div class="card chart">
+        <h3>Kilometer pro Woche <span>letzte 12 Wochen</span></h3>
+        <div id="weekChart"></div>
+      </div>
+      <div class="card chart">
+        <h3>Ø Split pro Einheit <span>/ 500 m · schneller = oben</span></h3>
+        <div id="paceTrend"></div>
+      </div>
+      <div class="card chart">
+        <h3>Meter pro Schlag <span>höher = effizienter</span></h3>
+        <div id="mpsTrend"></div>
+      </div>
+
+      <h2 class="sec">Bestleistungen</h2>
+      <div class="card list" id="bestsTable"></div>
+
+      <h2 class="sec">Monate</h2>
+      <div class="card list" id="monthTable"></div>
+    </div>
+  </section>
+
+  <!-- ACCOUNT -->
+  <section id="view-account" class="hidden">
+    <div class="card panel stack" id="loggedOut">
+      <div>
+        <h2>Anmelden</h2>
+        <p>Mit einem Konto werden deine Einheiten in der Cloud gesichert und sind auf allen Geräten verfügbar. Ohne Anmeldung bleibt alles nur auf diesem Gerät.</p>
+      </div>
+      <form id="authForm" class="stack">
+        <label class="field">E-Mail<input type="email" id="authEmail" autocomplete="email" required></label>
+        <label class="field">Passwort<input type="password" id="authPass" autocomplete="current-password" minlength="8" required></label>
+        <div class="row">
+          <button class="btn primary" type="submit" id="btnLogin">Anmelden</button>
+          <button class="btn" type="button" id="btnSignup">Registrieren</button>
+        </div>
+        <div class="msg" id="authMsg"></div>
+      </form>
+    </div>
+
+    <div class="card panel stack hidden" id="loggedIn">
+      <div>
+        <h2>Konto</h2>
+        <p>Angemeldet als <strong id="accEmail"></strong></p>
+      </div>
+      <p class="msg" id="syncMsg">–</p>
+      <div class="row">
+        <button class="btn primary" id="btnSync">Jetzt synchronisieren</button>
+        <button class="btn" id="btnLogout">Abmelden</button>
+      </div>
+    </div>
+
+    <div class="card panel stack" style="margin-top:12px">
+      <div>
+        <h2>Backup</h2>
+        <p>Alle Einheiten dieses Geräts als Datei sichern oder wiederherstellen.</p>
+      </div>
+      <div class="row">
+        <button class="btn" id="btnExportAll">Backup exportieren</button>
+        <label class="btn">Backup importieren<input type="file" id="fileImport" accept="application/json" hidden></label>
+      </div>
+    </div>
+    <p class="hint" id="cloudOffline"></p>
+  </section>
+</main>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

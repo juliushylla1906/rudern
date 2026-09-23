@@ -1,0 +1,6 @@
+# persönliche Trainingsdaten nicht einchecken
+tools/sessions/
+*.csv
+__pycache__/
+node_modules/
+.DS_Store
