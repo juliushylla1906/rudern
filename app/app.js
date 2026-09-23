@@ -47,6 +47,82 @@ const timeFmt = new Intl.DateTimeFormat("de-DE", { hour: "2-digit", minute: "2-d
 const monthFmt = new Intl.DateTimeFormat("de-DE", { month: "long", year: "numeric" });
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+// ================= Einstellungen & Theme =================
+const settings = { maxHr: null };
+try { Object.assign(settings, JSON.parse(localStorage.getItem("rudern-settings") || "{}")); } catch {}
+function saveSettings() {
+  try { localStorage.setItem("rudern-settings", JSON.stringify(settings)); } catch {}
+  // geräteübergreifend im Konto merken
+  if (cloud.user) cloud.client.auth.updateUser({ data: { max_hr: settings.maxHr } });
+}
+
+function applyTheme(t) {
+  if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+  else delete document.documentElement.dataset.theme;
+  try { localStorage.setItem("rudern-theme", t); } catch {}
+  document.querySelectorAll("#themeSeg button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.themeOpt === t));
+  const dark = t === "dark" || (t !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+  document.querySelector('meta[name="theme-color"]').content = dark ? "#1a1a19" : "#0f6fb8";
+  showView(currentView); // Diagramme mit neuen Farben neu zeichnen
+}
+function currentTheme() { try { return localStorage.getItem("rudern-theme") || "auto"; } catch { return "auto"; } }
+
+// ================= Pulszonen (% der maximalen Herzfrequenz, wie bei Garmin) =================
+const ZONES = [
+  { n: 1, name: "Aufwärmen", lo: 0.5 },
+  { n: 2, name: "Leicht", lo: 0.6 },
+  { n: 3, name: "Aerob", lo: 0.7 },
+  { n: 4, name: "Schwelle", lo: 0.8 },
+  { n: 5, name: "Maximum", lo: 0.9 },
+];
+const zoneColor = (n) => (n ? `var(--z${n})` : "var(--surface-2)");
+function zoneOf(bpm) {
+  const m = settings.maxHr;
+  if (!m || !bpm) return 0;
+  let z = 0;
+  for (const Z of ZONES) if (bpm >= Z.lo * m) z = Z.n;
+  return z;
+}
+function zoneRange(n) {
+  const m = settings.maxHr, Z = ZONES[n - 1];
+  const lo = Math.round(Z.lo * m), hi = n < 5 ? Math.round(ZONES[n].lo * m) - 1 : null;
+  return hi ? `${lo}–${hi}` : `≥ ${lo}`;
+}
+// Sekunden je Pulswert – kompakt speicherbar, Zonen lassen sich damit für jede Max-HF neu berechnen
+function hrHistogram(samples) {
+  const h = {};
+  for (const x of samples) if (x[5] > 0) h[x[5]] = (h[x[5]] || 0) + 1;
+  return h;
+}
+function zoneSeconds(hist) {
+  const t = [0, 0, 0, 0, 0, 0]; // Index 0 = unter Zone 1
+  for (const [bpm, s] of Object.entries(hist || {})) t[zoneOf(+bpm)] += s;
+  return t;
+}
+
+// Karte mit Balken + Tabelle (Tabelle trägt Zahlen und Namen, Farbe ist nie alleiniger Träger)
+function renderZones(el, hist, title) {
+  const secs = zoneSeconds(hist);
+  const total = secs.reduce((a, b) => a + b, 0);
+  el.classList.toggle("hidden", total === 0);
+  if (!total) return;
+  if (!settings.maxHr) {
+    el.innerHTML = `<h3>${title}</h3><p class="muted" style="margin:0;font-size:14px">Trag unter <b>Konto → Einstellungen</b> deine maximale Herzfrequenz ein, dann erscheinen hier deine Pulszonen.</p>`;
+    return;
+  }
+  const rows = [5, 4, 3, 2, 1, 0].filter((n) => n > 0 || secs[0] > 0);
+  el.innerHTML = `<h3>${title}</h3>
+    <div class="zonebar" role="img" aria-label="Zeit in Pulszonen">${[0, 1, 2, 3, 4, 5].filter((n) => secs[n]).map((n) =>
+      `<div style="--zc:${zoneColor(n)};flex:${secs[n]}"></div>`).join("")}</div>
+    <table class="zlegend"><tbody>${rows.map((n) => {
+      const pct = Math.round((secs[n] / total) * 100);
+      const label = n ? `Z${n} ${ZONES[n - 1].name}` : "unter Z1";
+      const range = n ? zoneRange(n) : `< ${Math.round(0.5 * settings.maxHr)}`;
+      return `<tr style="--zc:${zoneColor(n)}"><td><i></i>${label}</td><td class="muted num">${range}</td>
+        <td class="pctbar"><span style="width:${pct}%"></span></td><td class="r num">${fmtTime(secs[n])}</td><td class="r num muted">${pct} %</td></tr>`;
+    }).join("")}</tbody></table>`;
+}
+
 // ================= Lokaler Speicher (IndexedDB) =================
 // Einheit: { id, owner, start, duration, distance, strokes, kcal, avgPace, avgSpm, avgPower, maxPower, avgHr,
 //            bests, samples | null (nur in Cloud), synced }
@@ -132,6 +208,8 @@ async function doSync() {
     let local = await db.all();
     for (const s of local) {
       if (!s.owner) { s.owner = uid; s.synced = false; await db.put(s); } // ohne Anmeldung aufgezeichnet
+      // Einheiten mit Puls aus älteren App-Versionen: Pulsverteilung nachrüsten
+      if (s.samples && !s.bests?.hrHist && s.samples.some((x) => x[5] > 0)) { summarize(s); s.synced = false; await db.put(s); }
     }
     const pending = local.filter((s) => s.owner === uid && !s.synced && s.samples && s.id !== session?.id);
     if (pending.length) {
@@ -213,6 +291,7 @@ function summarize(s) {
   s.maxPower = Math.max(0, ...sm.map((x) => x[4]));
   s.avgHr = hrs.length ? Math.round(hrs.reduce((a, x) => a + x[5], 0) / hrs.length) : 0;
   s.bests = bestEfforts(sm);
+  if (hrs.length) s.bests.hrHist = hrHistogram(sm);
   return s;
 }
 
@@ -405,6 +484,10 @@ async function onHrDisconnected() {
 function renderHr() {
   const v = currentHr();
   $("vHr").textContent = v > 0 ? v : "–";
+  const z = zoneOf(v);
+  const tileEl = $("vHr").closest(".tile");
+  if (z) tileEl.style.setProperty("--zc", zoneColor(z)); else tileEl.style.removeProperty("--zc");
+  $("vZone").innerHTML = z ? `<i style="--zc:${zoneColor(z)}"></i>Z${z} ${ZONES[z - 1].name}` : "";
   $("btnHr").textContent = hr.device ? "Trennen" : "Uhr / Gurt koppeln";
   $("btnHr").disabled = !navigator.bluetooth;
   $("hrSource").textContent = hr.device ? `· ${hr.device.name || "verbunden"}` : "";
@@ -534,6 +617,13 @@ function lineChart(container, xs, ys, opts = {}) {
     const anchor = opts.xfmt && xt.length > 1 ? (k === 0 ? "start" : k === xt.length - 1 ? "end" : "middle") : "middle";
     el("text", { x: sx(t), y: H - 4, "text-anchor": anchor }, ax).textContent = fmtX(t);
   });
+
+  // Hintergrundbänder (z. B. Pulszonen), dezent hinter der Linie
+  for (const b of opts.bands ?? []) {
+    const a = sy(Math.max(b.from, y0)), c = sy(Math.min(b.to, y1));
+    if (b.to <= y0 || b.from >= y1) continue;
+    el("rect", { x: m.l, width: iw, y: Math.min(a, c), height: Math.abs(a - c), style: `fill:${b.color};fill-opacity:.14` }, svg);
+  }
 
   let d = "";
   xs.forEach((x, i) => { d += (i ? "L" : "M") + sx(x).toFixed(1) + "," + sy(ys[i]).toFixed(1); });
@@ -704,9 +794,14 @@ function drawDetailCharts(s) {
     lineChart($("dSpm"), t, smooth(3), { unit: "spm", label: "Schlagfrequenz", fmt: (v) => (Math.round(v * 10) / 10).toLocaleString("de-DE") });
     lineChart($("dPower"), t, smooth(4).map(Math.round), { zero: true, unit: "W", label: "Leistung" });
   }
-  const hr = s.samples.filter((x) => x[5] > 0);
-  $("dHrWrap").classList.toggle("hidden", hr.length < 3);
-  if (hr.length >= 3) lineChart($("dHr"), hr.map((x) => x[0]), hr.map((x) => x[5]), { unit: "bpm", label: "Herzfrequenz" });
+  const hrS = s.samples.filter((x) => x[5] > 0);
+  $("dHrWrap").classList.toggle("hidden", hrS.length < 3);
+  renderZones($("dZones"), s.bests?.hrHist ?? hrHistogram(s.samples), "Zeit in Pulszonen");
+  if (hrS.length >= 3) {
+    const m = settings.maxHr;
+    const bands = m ? ZONES.map((Z, k) => ({ from: Z.lo * m, to: k < 4 ? ZONES[k + 1].lo * m : 999, color: `var(--z${Z.n})` })) : [];
+    lineChart($("dHr"), hrS.map((x) => x[0]), hrS.map((x) => x[5]), { unit: "bpm", label: "Herzfrequenz", bands });
+  }
 }
 
 function closeDetail() {
@@ -777,6 +872,10 @@ async function renderTrends() {
     tile("Ø Split", fmtPace(A.pace), "", paceDelta === null ? "" : paceDelta === 0 ? "= gleich" : `${paceDelta < 0 ? "▲" : "▼"} ${Math.abs(paceDelta)} s ${paceDelta < 0 ? "schneller" : "langsamer"}`),
   ].join("");
 
+  const hist4 = {};
+  for (const s of cur) for (const [bpm, n] of Object.entries(s.bests?.hrHist ?? {})) hist4[bpm] = (hist4[bpm] || 0) + n;
+  renderZones($("tZones"), hist4, "Zeit in Pulszonen <span>letzte 4 Wochen</span>");
+
   // km pro Woche, letzte 12 Wochen
   const w0 = weekStart(now).getTime();
   const weeks = [];
@@ -844,7 +943,26 @@ async function renderTrends() {
 }
 
 // ================= Konto =================
+// Max-HF aus dem Konto übernehmen (gilt dann auf allen Geräten)
+function adoptRemoteSettings() {
+  const mh = cloud.user?.user_metadata?.max_hr;
+  if (mh && mh !== settings.maxHr) {
+    settings.maxHr = mh;
+    try { localStorage.setItem("rudern-settings", JSON.stringify(settings)); } catch {}
+  }
+}
+
+function renderSettings() {
+  $("maxHrInput").value = settings.maxHr ?? "";
+  $("zoneRanges").innerHTML = settings.maxHr
+    ? ZONES.map((Z) => `<span style="white-space:nowrap"><span class="zone-badge" style="margin:0"><i style="--zc:${zoneColor(Z.n)}"></i></span> Z${Z.n} ${zoneRange(Z.n)}</span>`).join(" &nbsp; ")
+    : "";
+  document.querySelectorAll("#themeSeg button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.themeOpt === currentTheme()));
+}
+
 function renderAccount() {
+  adoptRemoteSettings();
+  renderSettings();
   const u = cloud.user;
   $("loggedOut").classList.toggle("hidden", !!u);
   $("loggedIn").classList.toggle("hidden", !u);
@@ -923,6 +1041,15 @@ $("authForm").addEventListener("submit", (e) => { e.preventDefault(); authAction
 $("btnSignup").addEventListener("click", () => authAction("signup"));
 $("btnLogout").addEventListener("click", () => cloud.client?.auth.signOut());
 $("btnSync").addEventListener("click", () => sync());
+document.querySelectorAll("#themeSeg button").forEach((b) => b.addEventListener("click", () => applyTheme(b.dataset.themeOpt)));
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyTheme(currentTheme()));
+$("maxHrInput").addEventListener("change", (e) => {
+  const v = Math.round(+e.target.value);
+  settings.maxHr = v >= 120 && v <= 230 ? v : null;
+  saveSettings();
+  renderSettings();
+  renderHr();
+});
 $("btnExportAll").addEventListener("click", async () => {
   download(`rudern_backup_${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(await visibleSessions()), "application/json");
 });
@@ -956,6 +1083,7 @@ window.addEventListener("resize", () => {
   }, 150);
 });
 
-renderLive();
+applyTheme(currentTheme());
+renderSettings();
 renderHistory();
 initCloud();

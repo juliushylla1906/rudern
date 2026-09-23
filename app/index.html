@@ -7,10 +7,14 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Rudern</title>
 <link rel="stylesheet" href="style.css">
+<script>
+  // Theme vor dem ersten Rendern setzen (kein Aufblitzen)
+  try { const t = localStorage.getItem("rudern-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}
+</script>
 </head>
 <body>
 <header>
-  <h1>Rudern</h1>
+  <h1><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 17c2 0 2-1.5 4.5-1.5S10 17 12 17s2-1.5 4.5-1.5S19 17 21 17"/><path d="M3 21c2 0 2-1.5 4.5-1.5S10 21 12 21s2-1.5 4.5-1.5S19 21 21 21"/><path d="M5 13 19 3"/><path d="M17.5 2.5l3 3-2 1.5-2.5-2.5z" fill="currentColor"/></svg>Rudern</h1>
   <div class="status" id="status" data-state="idle"><span class="dot"></span><span id="statusText">Nicht verbunden</span></div>
   <nav role="tablist">
     <button role="tab" aria-selected="true" data-view="live">Live</button>
@@ -35,16 +39,17 @@
     </div>
 
     <div class="tiles">
-      <div class="card tile"><div class="label">Zeit</div><div class="value num" id="vTime">0:00</div></div>
-      <div class="card tile"><div class="label">Distanz</div><div class="value num"><span id="vDist">0</span><span class="unit">m</span></div></div>
-      <div class="card tile"><div class="label">Schlagfrequenz</div><div class="value num"><span id="vSpm">0</span><span class="unit">spm</span></div></div>
-      <div class="card tile"><div class="label">Leistung</div><div class="value num"><span id="vPower">0</span><span class="unit">W</span></div></div>
-      <div class="card tile"><div class="label">Schläge</div><div class="value num" id="vStrokes">0</div></div>
-      <div class="card tile"><div class="label">Kalorien</div><div class="value num"><span id="vKcal">0</span><span class="unit">kcal</span></div></div>
-      <div class="card tile"><div class="label">Meter / Schlag</div><div class="value num"><span id="vMps">–</span><span class="unit">m</span></div></div>
+      <div class="card tile m-time"><div class="label">Zeit</div><div class="value num" id="vTime">0:00</div></div>
+      <div class="card tile m-time"><div class="label">Distanz</div><div class="value num"><span id="vDist">0</span><span class="unit">m</span></div></div>
+      <div class="card tile m-stroke"><div class="label">Schlagfrequenz</div><div class="value num"><span id="vSpm">0</span><span class="unit">spm</span></div></div>
+      <div class="card tile m-power"><div class="label">Leistung</div><div class="value num"><span id="vPower">0</span><span class="unit">W</span></div></div>
+      <div class="card tile m-stroke"><div class="label">Schläge</div><div class="value num" id="vStrokes">0</div></div>
+      <div class="card tile m-power"><div class="label">Kalorien</div><div class="value num"><span id="vKcal">0</span><span class="unit">kcal</span></div></div>
+      <div class="card tile m-tech"><div class="label">Meter / Schlag</div><div class="value num"><span id="vMps">–</span><span class="unit">m</span></div></div>
       <div class="card tile hr-tile">
         <div class="label">Puls <span class="muted" id="hrSource"></span></div>
         <div class="value num"><span id="vHr">–</span><span class="unit">bpm</span></div>
+        <div class="zone-badge" id="vZone"></div>
         <button class="btn small" id="btnHr">Uhr / Gurt koppeln</button>
       </div>
     </div>
@@ -93,6 +98,7 @@
         <div class="card chart"><h3>Split <span>/ 500 m · schneller = oben · 5-s-Mittel</span></h3><div id="dPace"></div></div>
         <div class="card chart"><h3>Schlagfrequenz <span>spm</span></h3><div id="dSpm"></div></div>
         <div class="card chart"><h3>Leistung <span>W</span></h3><div id="dPower"></div></div>
+        <div class="card zones hidden" id="dZones"></div>
         <div class="card chart hidden" id="dHrWrap"><h3>Herzfrequenz <span>bpm</span></h3><div id="dHr"></div></div>
       </div>
     </div>
@@ -117,6 +123,8 @@
         <h3>Meter pro Schlag <span>höher = effizienter</span></h3>
         <div id="mpsTrend"></div>
       </div>
+
+      <div class="card zones hidden" id="tZones"></div>
 
       <h2 class="sec">Bestleistungen</h2>
       <div class="card list" id="bestsTable"></div>
@@ -154,6 +162,23 @@
         <button class="btn primary" id="btnSync">Jetzt synchronisieren</button>
         <button class="btn" id="btnLogout">Abmelden</button>
       </div>
+    </div>
+
+    <div class="card panel stack" style="margin-top:12px">
+      <h2>Einstellungen</h2>
+      <div class="setting">
+        <div><div class="t">Darstellung</div><div class="d">Hell ist farbig, Dunkel ist der ruhige Look.</div></div>
+        <div class="seg" id="themeSeg">
+          <button data-theme-opt="auto">Automatisch</button>
+          <button data-theme-opt="light">Hell</button>
+          <button data-theme-opt="dark">Dunkel</button>
+        </div>
+      </div>
+      <div class="setting">
+        <div><div class="t">Maximale Herzfrequenz</div><div class="d">Grundlage der Pulszonen. Den Wert findest du in Garmin Connect unter Herzfrequenz-Bereiche.</div></div>
+        <div class="row"><input type="number" id="maxHrInput" min="120" max="230" inputmode="numeric" placeholder="z. B. 190"><span class="muted">bpm</span></div>
+      </div>
+      <div class="d muted" id="zoneRanges" style="font-size:13px"></div>
     </div>
 
     <div class="card panel stack" style="margin-top:12px">
