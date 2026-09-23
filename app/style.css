@@ -79,6 +79,7 @@ main { max-width: 960px; margin: 0 auto; padding: 16px; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .btn.danger { color: var(--critical); }
 .btn:disabled { opacity: .45; cursor: default; }
+.btn.small { font-size: 13px; padding: 6px 10px; border-radius: 8px; margin-top: 6px; width: 100%; }
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px; }
 .stack > * + * { margin-top: 12px; }

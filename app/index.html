@@ -41,8 +41,12 @@
       <div class="card tile"><div class="label">Leistung</div><div class="value num"><span id="vPower">0</span><span class="unit">W</span></div></div>
       <div class="card tile"><div class="label">Schläge</div><div class="value num" id="vStrokes">0</div></div>
       <div class="card tile"><div class="label">Kalorien</div><div class="value num"><span id="vKcal">0</span><span class="unit">kcal</span></div></div>
-      <div class="card tile"><div class="label">Herzfrequenz</div><div class="value num"><span id="vHr">–</span><span class="unit">bpm</span></div></div>
-      <div class="card tile"><div class="label">Widerstand</div><div class="value num" id="vRes">–</div></div>
+      <div class="card tile"><div class="label">Meter / Schlag</div><div class="value num"><span id="vMps">–</span><span class="unit">m</span></div></div>
+      <div class="card tile hr-tile">
+        <div class="label">Puls <span class="muted" id="hrSource"></span></div>
+        <div class="value num"><span id="vHr">–</span><span class="unit">bpm</span></div>
+        <button class="btn small" id="btnHr">Uhr / Gurt koppeln</button>
+      </div>
     </div>
 
     <div class="row controls">

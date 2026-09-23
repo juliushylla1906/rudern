@@ -24,6 +24,11 @@ function parseRowerData(dv) {
   return { more: !!(f & 0x0001), data: o };
 }
 
+// Heart Rate Measurement (0x2A37): Flags, dann HF als uint8 oder uint16
+function parseHeartRate(dv) {
+  return dv.getUint8(0) & 0x01 ? dv.getUint16(1, true) : dv.getUint8(1);
+}
+
 // ================= Helpers =================
 const $ = (id) => document.getElementById(id);
 const DAY = 86400000;
@@ -238,6 +243,12 @@ function finishManually() {
   return saveSession(true);
 }
 
+function currentHr() {
+  // externer Pulsmesser hat Vorrang; Werte älter als 5 s gelten als Aussetzer
+  if (hr.value && Date.now() - hr.at < 5000) return hr.value;
+  return live.hr ?? 0;
+}
+
 function onRowerData(d) {
   Object.assign(live, d);
   const el = live.elapsed ?? 0;
@@ -256,7 +267,7 @@ function onRowerData(d) {
   if (session && el !== session.lastElapsed) {
     session.lastElapsed = el;
     session.samples.push([el - b.elapsed, (live.dist ?? 0) - b.dist, live.pace ?? 0, live.spm ?? 0, live.power ?? 0,
-      live.hr ?? 0, (live.strokes ?? 0) - b.strokes, (live.kcal ?? 0) - b.kcal]);
+      currentHr(), (live.strokes ?? 0) - b.strokes, (live.kcal ?? 0) - b.kcal]);
     if (Date.now() - lastSaved > 15000) saveSession(false);
   }
   renderLive();
@@ -344,6 +355,61 @@ async function disconnect() {
   setStatus("idle", "Nicht verbunden");
 }
 
+// ================= Pulsmesser (Brustgurt oder Uhr mit HF-Übertragung, z. B. Garmin) =================
+const hr = { device: null, value: 0, at: 0, userDisconnect: false };
+
+async function connectHr() {
+  if (hr.device) { // zweiter Tipp trennt
+    hr.userDisconnect = true;
+    if (hr.device.gatt.connected) hr.device.gatt.disconnect();
+    hr.device = null; hr.value = 0;
+    renderHr();
+    return;
+  }
+  try {
+    hr.userDisconnect = false;
+    hr.device = await navigator.bluetooth.requestDevice({ filters: [{ services: ["heart_rate"] }] });
+    hr.device.addEventListener("gattserverdisconnected", onHrDisconnected);
+    await startHr();
+  } catch (e) {
+    if (e.name !== "NotFoundError") alert("Pulsmesser: " + e.message);
+    hr.device = null;
+  }
+  renderHr();
+}
+
+async function startHr() {
+  $("hrSource").textContent = "· verbinde …";
+  const server = await hr.device.gatt.connect();
+  const ch = await (await server.getPrimaryService("heart_rate")).getCharacteristic("heart_rate_measurement");
+  ch.addEventListener("characteristicvaluechanged", (ev) => {
+    hr.value = parseHeartRate(ev.target.value);
+    hr.at = Date.now();
+    renderHr();
+  });
+  await ch.startNotifications();
+  renderHr();
+}
+
+async function onHrDisconnected() {
+  if (hr.userDisconnect || !hr.device) return;
+  hr.value = 0;
+  $("hrSource").textContent = "· Verbindung verloren …";
+  for (let i = 0; i < 5 && hr.device && !hr.userDisconnect; i++) {
+    try { await startHr(); return; } catch { await new Promise((r) => setTimeout(r, 2000)); }
+  }
+  hr.device = null;
+  renderHr();
+}
+
+function renderHr() {
+  const v = currentHr();
+  $("vHr").textContent = v > 0 ? v : "–";
+  $("btnHr").textContent = hr.device ? "Trennen" : "Uhr / Gurt koppeln";
+  $("btnHr").disabled = !navigator.bluetooth;
+  $("hrSource").textContent = hr.device ? `· ${hr.device.name || "verbunden"}` : "";
+}
+
 // Demo: erzeugt echte FTMS-Pakete und schickt sie durch denselben Parser
 function startDemo() {
   let t = 0, dist = 0, strokes = 0, tick = 0, kcal = 0;
@@ -382,8 +448,9 @@ function renderLive() {
   $("vPower").textContent = live.power ?? 0;
   $("vStrokes").textContent = Math.max(0, (live.strokes ?? 0) - b.strokes);
   $("vKcal").textContent = Math.max(0, (live.kcal ?? 0) - b.kcal);
-  $("vHr").textContent = live.hr > 0 ? live.hr : "–";
-  $("vRes").textContent = live.resistance ?? "–";
+  const strokes = Math.max(0, (live.strokes ?? 0) - b.strokes);
+  $("vMps").textContent = strokes > 0 ? (dist / strokes).toLocaleString("de-DE", { maximumFractionDigits: 1 }) : "–";
+  renderHr();
   if (session) setStatus("recording", "Aufzeichnung läuft");
   else if (device || demoTimer) setStatus("connected", device?.name || "Demo");
 
@@ -842,6 +909,7 @@ if (!navigator.bluetooth) $("noBt").classList.remove("hidden");
 setStatus("idle", "Nicht verbunden");
 $("btnConnect").addEventListener("click", connect);
 $("btnDemo").addEventListener("click", startDemo);
+$("btnHr").addEventListener("click", connectHr);
 $("btnDisconnect").addEventListener("click", disconnect);
 $("btnFinish").addEventListener("click", async () => {
   await finishManually();
