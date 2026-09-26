@@ -31,7 +31,8 @@
   <section id="view-live">
     <div id="noBt" class="card warn hidden">
       <strong>Web Bluetooth ist in diesem Browser nicht verfügbar.</strong><br>
-      Am Laptop Chrome oder Edge verwenden, auf dem iPhone die App „Bluefy“.    </div>
+      Am Laptop Chrome oder Edge verwenden, auf dem iPhone die App „Bluefy“.
+    </div>
 
     <div class="card hero">
       <div class="label">Split / 500 m</div>
@@ -88,10 +89,7 @@
       <button class="btn back" id="btnBack">← Verlauf</button>
       <div class="detail-head">
         <h2 id="dTitle"></h2>
-        <div class="row">
-          <button class="btn" id="btnCsv">CSV</button>
-          <button class="btn danger" id="btnDelete">Löschen</button>
-        </div>
+        <button class="btn" id="btnCsv">CSV</button>
       </div>
       <div class="tiles" id="dTiles"></div>
       <p class="hint hidden" id="dNoSamples">Die Messpunkte dieser Einheit liegen nur in der Cloud. Zum Laden online gehen.</p>
@@ -102,6 +100,10 @@
         <div class="card zones hidden" id="dZones"></div>
         <div class="card chart hidden" id="dHrWrap"><h3>Herzfrequenz <span>bpm</span></h3><div id="dHr"></div></div>
       </div>
+      <div class="delete-zone">
+        <button class="btn quiet hold" id="btnDelete">Einheit löschen</button>
+        <p class="hint" id="deleteHint"></p>
+      </div>
     </div>
   </section>
 
@@ -109,18 +111,24 @@
   <section id="view-trends" class="hidden">
     <div id="trendsEmpty" class="card empty hidden">Für Trends braucht es mindestens zwei Einheiten.</div>
     <div id="trendsBody">
-      <h2 class="sec" style="margin-top:0">Letzte 4 Wochen <span class="muted" style="font-weight:400">vs. 4 Wochen davor</span></h2>
+      <div class="seg period" id="periodSeg" role="group" aria-label="Zeitraum">
+        <button data-period="4w">4 Wochen</button>
+        <button data-period="3m">Quartal</button>
+        <button data-period="12m">Jahr</button>
+        <button data-period="all">Gesamt</button>
+      </div>
+      <h2 class="sec" id="trendHead"></h2>
       <div class="tiles three" id="trendTiles"></div>
 
       <div class="card chart">
-        <h3>Kilometer pro Woche <span>letzte 12 Wochen</span></h3>
+        <h3 id="barTitle"></h3>
         <div id="weekChart"></div>
       </div>
-      <div class="card chart">
+      <div class="card chart" id="paceWrap">
         <h3>Ø Split pro Einheit <span>/ 500 m · schneller = oben</span></h3>
         <div id="paceTrend"></div>
       </div>
-      <div class="card chart">
+      <div class="card chart" id="mpsWrap">
         <h3>Meter pro Schlag <span>höher = effizienter</span></h3>
         <div id="mpsTrend"></div>
       </div>

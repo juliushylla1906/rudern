@@ -775,6 +775,7 @@ async function openDetail(id) {
   showView("history", true);
   current = (await db.get(id)) ?? null;
   if (!current) return;
+  $("deleteHint").textContent = "";
   $("historyList").classList.add("hidden");
   $("detail").classList.remove("hidden");
   window.scrollTo(0, 0);
@@ -839,7 +840,8 @@ function closeDetail() {
 
 async function deleteCurrent() {
   const s = current;
-  if (!s || !confirm("Diese Einheit wirklich löschen?")) return;
+  $("deleteHint").textContent = "";
+  if (!s || !confirm(`Einheit vom ${listDate.format(new Date(s.start))} (${nf.format(s.distance)} m) wirklich löschen? Das lässt sich nicht rückgängig machen.`)) return;
   if (s.synced) {
     if (!cloud.client || !cloud.user) return alert("Diese Einheit liegt in der Cloud. Zum Löschen bitte anmelden.");
     const { error } = await cloud.client.from("sessions").delete().eq("id", s.id);
@@ -875,6 +877,16 @@ function pctDelta(now, before) {
   return p === 0 ? "= gleich" : `${p > 0 ? "▲" : "▼"} ${Math.abs(p)} % ${p > 0 ? "mehr" : "weniger"}`;
 }
 
+const PERIODS = {
+  "4w": { days: 28, weeks: 12, label: "Letzte 4 Wochen", prev: "4 Wochen davor" },
+  "3m": { days: 91, weeks: 13, label: "Letztes Quartal", prev: "Quartal davor" },
+  "12m": { days: 365, label: "Letzte 12 Monate", prev: "12 Monate davor" },
+  all: {},
+};
+const monthShort = new Intl.DateTimeFormat("de-DE", { month: "short" });
+let trendPeriod = "4w";
+try { if (PERIODS[localStorage.getItem("rudern-period")]) trendPeriod = localStorage.getItem("rudern-period"); } catch {}
+
 async function renderTrends() {
   const all = (await visibleSessions()).slice().reverse(); // alt -> neu
   const enough = all.length >= 2;
@@ -882,10 +894,15 @@ async function renderTrends() {
   $("trendsBody").classList.toggle("hidden", !enough);
   if (!enough || currentView !== "trends") return;
 
-  // 4 Wochen vs. 4 Wochen davor
+  // gewählter Zeitraum vs. gleich langer Zeitraum davor (bei „Gesamt“ kein Vergleich)
+  const P = PERIODS[trendPeriod];
+  document.querySelectorAll("#periodSeg button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.period === trendPeriod));
   const now = Date.now();
   const inRange = (a, b) => all.filter((s) => { const t = new Date(s.start).getTime(); return t > now - a * DAY && t <= now - b * DAY; });
-  const cur = inRange(28, 0), prev = inRange(56, 28);
+  const cur = P.days ? inRange(P.days, 0) : all, prev = P.days ? inRange(2 * P.days, P.days) : [];
+  $("trendHead").innerHTML = P.days
+    ? `${P.label} <span class="muted" style="font-weight:400">vs. ${P.prev}</span>`
+    : `Gesamt <span class="muted" style="font-weight:400">seit ${listDate.format(new Date(all[0].start))}</span>`;
   const agg = (arr) => {
     const dist = arr.reduce((a, s) => a + s.distance, 0), dur = arr.reduce((a, s) => a + s.duration, 0);
     return { n: arr.length, dist, pace: dist ? (dur / dist) * 500 : 0 };
@@ -894,39 +911,54 @@ async function renderTrends() {
   const paceDelta = A.pace && B.pace ? Math.round(A.pace - B.pace) : null;
   $("trendTiles").innerHTML = [
     tile("Einheiten", A.n, "", B.n ? `vorher ${B.n}` : ""),
-    tile("Distanz", km(A.dist), "km", pctDelta(A.dist, B.dist)),
+    tile("Distanz", km(A.dist), "km", P.days ? pctDelta(A.dist, B.dist) : ""),
     tile("Ø Split", fmtPace(A.pace), "", paceDelta === null ? "" : paceDelta === 0 ? "= gleich" : `${paceDelta < 0 ? "▲" : "▼"} ${Math.abs(paceDelta)} s ${paceDelta < 0 ? "schneller" : "langsamer"}`),
   ].join("");
 
-  const hist4 = {};
-  for (const s of cur) for (const [bpm, n] of Object.entries(s.bests?.hrHist ?? {})) hist4[bpm] = (hist4[bpm] || 0) + n;
-  renderZones($("tZones"), hist4, "Zeit in Pulszonen <span>letzte 4 Wochen</span>");
+  const histP = {};
+  for (const s of cur) for (const [bpm, n] of Object.entries(s.bests?.hrHist ?? {})) histP[bpm] = (histP[bpm] || 0) + n;
+  renderZones($("tZones"), histP, `Zeit in Pulszonen <span>${P.days ? P.label.toLowerCase() : "gesamt"}</span>`);
 
-  // km pro Woche, letzte 12 Wochen
-  const w0 = weekStart(now).getTime();
-  const weeks = [];
-  for (let k = 11; k >= 0; k--) {
-    const start = w0 - k * 7 * DAY;
-    const inW = all.filter((s) => { const t = new Date(s.start).getTime(); return t >= start && t < start + 7 * DAY; });
-    const dist = inW.reduce((a, s) => a + s.distance, 0);
-    weeks.push({
-      value: Math.round(dist / 100) / 10, short: shortDate.format(new Date(start)),
-      tip: `<div class="t">Woche ab ${shortDate.format(new Date(start))}</div><b>${km(dist)} km</b> · ${inW.length} ${inW.length === 1 ? "Einheit" : "Einheiten"}`,
+  // Kilometer je Woche (4 Wochen, Quartal) bzw. je Monat (Jahr, Gesamt)
+  const buckets = [];
+  const bucket = (start, end, label, short) => {
+    const inB = all.filter((s) => { const t = new Date(s.start).getTime(); return t >= start && t < end; });
+    const dist = inB.reduce((a, s) => a + s.distance, 0);
+    buckets.push({
+      value: Math.round(dist / 100) / 10, short,
+      tip: `<div class="t">${label}</div><b>${km(dist)} km</b> · ${inB.length} ${inB.length === 1 ? "Einheit" : "Einheiten"}`,
     });
+  };
+  if (P.weeks) {
+    const w0 = weekStart(now).getTime();
+    for (let k = P.weeks - 1; k >= 0; k--) {
+      const start = w0 - k * 7 * DAY;
+      bucket(start, start + 7 * DAY, `Woche ab ${shortDate.format(new Date(start))}`, shortDate.format(new Date(start)));
+    }
+    $("barTitle").innerHTML = `Kilometer pro Woche <span>letzte ${P.weeks} Wochen</span>`;
+  } else {
+    const d = new Date(now), first = new Date(all[0].start);
+    const n = P.days ? 12 : Math.max(1, (d.getFullYear() - first.getFullYear()) * 12 + d.getMonth() - first.getMonth() + 1);
+    for (let k = n - 1; k >= 0; k--) {
+      const m = new Date(d.getFullYear(), d.getMonth() - k, 1), next = new Date(d.getFullYear(), d.getMonth() - k + 1, 1);
+      bucket(m.getTime(), next.getTime(), monthFmt.format(m), monthShort.format(m));
+    }
+    $("barTitle").innerHTML = `Kilometer pro Monat <span>${P.days ? "letzte 12 Monate" : "seit Beginn"}</span>`;
   }
-  barChart($("weekChart"), weeks, { fmt: (v) => v.toLocaleString("de-DE"), label: "Kilometer pro Woche" });
+  barChart($("weekChart"), buckets, { fmt: (v) => v.toLocaleString("de-DE"), label: $("barTitle").textContent });
 
-  // Split und Meter/Schlag je Einheit
-  const withPace = all.filter((s) => s.avgPace > 0);
+  // Split und Meter/Schlag je Einheit im gewählten Zeitraum
+  const withPace = cur.filter((s) => s.avgPace > 0), withMps = cur.filter((s) => s.strokes > 0);
   const day = (s) => new Date(s.start).getTime() / DAY;
   const xDate = (x) => shortDate.format(new Date(x * DAY));
   const tipS = (arr) => (_x, i) => `${listDate.format(new Date(arr[i].start))} · ${nf.format(arr[i].distance)} m`;
-  lineChart($("paceTrend"), withPace.map(day), withPace.map((s) => Math.round(s.avgPace)), {
+  $("paceWrap").classList.toggle("hidden", withPace.length < 2);
+  $("mpsWrap").classList.toggle("hidden", withMps.length < 2);
+  if (withPace.length >= 2) lineChart($("paceTrend"), withPace.map(day), withPace.map((s) => Math.round(s.avgPace)), {
     invert: true, fmt: fmtPace, unit: "/500 m", xfmt: xDate, tipX: tipS(withPace), dots: withPace.length <= 60,
     onClick: (i) => openDetail(withPace[i].id), label: "Durchschnittlicher Split pro Einheit",
   });
-  const withMps = all.filter((s) => s.strokes > 0);
-  lineChart($("mpsTrend"), withMps.map(day), withMps.map((s) => Math.round((s.distance / s.strokes) * 10) / 10), {
+  if (withMps.length >= 2) lineChart($("mpsTrend"), withMps.map(day), withMps.map((s) => Math.round((s.distance / s.strokes) * 10) / 10), {
     unit: "m/Schlag", xfmt: xDate, tipX: tipS(withMps), dots: withMps.length <= 60,
     fmt: (v) => v.toLocaleString("de-DE", { maximumFractionDigits: 1 }),
     onClick: (i) => openDetail(withMps[i].id), label: "Meter pro Schlag",
@@ -1060,12 +1092,12 @@ $("btnHr").addEventListener("click", connectHr);
 // Während einer Aufzeichnung muss der Knopf gedrückt gehalten werden – ein versehentliches
 // Antippen (z. B. beim Scrollen) beendet die Einheit nicht. Scrollen bricht das Halten ab.
 const HOLD_MS = 1200;
-function holdToConfirm(btn, action) {
+function holdToConfirm(btn, action, { needsHold = () => !!session, onTap } = {}) {
   let timer = null, fired = false;
   btn.style.setProperty("--hold-ms", HOLD_MS + "ms");
   const cancel = () => { clearTimeout(timer); timer = null; btn.classList.remove("holding"); };
   btn.addEventListener("pointerdown", () => {
-    if (btn.disabled || !session) return;
+    if (btn.disabled || !needsHold()) return;
     btn.classList.add("holding");
     timer = setTimeout(() => { cancel(); fired = true; action(); }, HOLD_MS);
   });
@@ -1073,11 +1105,21 @@ function holdToConfirm(btn, action) {
   btn.addEventListener("contextmenu", (e) => e.preventDefault());
   btn.addEventListener("click", () => {
     if (fired) { fired = false; return; } // Klick nach erfolgreichem Halten
-    if (!session) return action();
+    if (!needsHold()) return action();
+    if (onTap) return onTap();
     $("hint").textContent = `Zum ${btn.textContent === "Trennen" ? "Trennen" : "Beenden"} den Knopf gedrückt halten, bis der Balken voll ist.`;
   });
 }
 holdToConfirm($("btnDisconnect"), disconnect);
+holdToConfirm($("btnDelete"), deleteCurrent, {
+  needsHold: () => true,
+  onTap: () => { $("deleteHint").textContent = "Zum Löschen gedrückt halten, bis der Balken voll ist."; },
+});
+document.querySelectorAll("#periodSeg button").forEach((b) => b.addEventListener("click", () => {
+  trendPeriod = b.dataset.period;
+  try { localStorage.setItem("rudern-period", trendPeriod); } catch {}
+  renderTrends();
+}));
 holdToConfirm($("btnFinish"), async () => {
   await finishManually();
   $("hint").textContent = "Einheit gespeichert. Die nächste startet automatisch beim nächsten Schlag.";
@@ -1085,7 +1127,6 @@ holdToConfirm($("btnFinish"), async () => {
 });
 $("btnBack").addEventListener("click", closeDetail);
 $("btnCsv").addEventListener("click", () => current && exportCsv(current));
-$("btnDelete").addEventListener("click", deleteCurrent);
 $("authForm").addEventListener("submit", (e) => { e.preventDefault(); authAction("login"); });
 $("btnSignup").addEventListener("click", () => authAction("signup"));
 $("btnLogout").addEventListener("click", () => cloud.client?.auth.signOut());

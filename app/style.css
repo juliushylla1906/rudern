@@ -205,6 +205,13 @@ section h2.sec { font-size: 15px; margin: 24px 4px 4px; color: var(--text-second
 .seg { display: inline-flex; background: var(--surface-2); border-radius: 10px; padding: 3px; }
 .seg button { border: 0; background: none; font: inherit; font-size: 14px; color: var(--text-secondary); padding: 7px 12px; border-radius: 8px; cursor: pointer; }
 .seg button[aria-pressed="true"] { background: var(--nav-active-bg); color: var(--nav-active-ink); }
+.seg.period { display: flex; margin-bottom: 4px; }
+.seg.period button { flex: 1; padding: 7px 4px; white-space: nowrap; }
+/* Löschen: unauffällig am Ende der Einheit, nur per Gedrückthalten + Rückfrage */
+.delete-zone { margin: 32px 0 8px; text-align: center; }
+.btn.quiet { background: none; border-color: transparent; color: var(--text-secondary); font-size: 13px; font-weight: 500; padding: 8px 12px; }
+.btn.quiet.holding { color: var(--critical); }
+.btn.quiet.hold::after { background: var(--critical); opacity: .15; }
 input[type="number"] { width: 110px; font: inherit; font-size: 16px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--text-primary); }
 .setting { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding-top: 12px; border-top: 1px solid var(--border); }
 .setting .t { font-size: 15px; }
