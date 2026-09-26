@@ -321,9 +321,11 @@ async function saveSession(final) {
   const s = session;
   if (!s) return;
   if (final) session = null;
-  if (!s.samples.length) return;
+  // Nur speichern, wenn während der Aufzeichnung tatsächlich gerudert wurde. Verhindert Kopien,
+  // wenn das Gerät nach erneutem Verbinden noch den Stand einer schon gespeicherten Einheit meldet.
+  const sm = s.samples;
+  if (sm.length < 2 || sm[sm.length - 1][1] <= sm[0][1]) return;
   summarize(s);
-  if (s.distance <= 0) return;
   s.synced = false;
   const { lastElapsed, carry, movedAt, ...record } = s;
   await db.put(record);
@@ -449,13 +451,13 @@ async function onDisconnected() {
 
 async function disconnect() {
   userDisconnect = true;
-  await saveSession(true);
+  // wie „Einheit beenden“: Gerätestand merken, damit er nach erneutem Verbinden nicht als neue Einheit zählt
+  await finishManually();
   if (device?.gatt.connected) device.gatt.disconnect();
   device = null;
   if (demoTimer) { clearInterval(demoTimer); demoTimer = null; }
   try { await wakeLock?.release(); } catch {}
   live = {};
-  base = null;
   renderLive();
   setStatus("idle", "Nicht verbunden");
 }
@@ -744,7 +746,7 @@ async function renderHistory() {
   const list = $("sessionList");
   $("histChartWrap").classList.toggle("hidden", sessions.length === 0);
   if (!sessions.length) {
-    list.innerHTML = `<div class="empty">Noch keine Einheiten. Verbinde dich im Tab „Live“ und leg los – oder probier den Demo-Modus.</div>`;
+    list.innerHTML = `<div class="empty">Noch keine Einheiten. Verbinde dich im Tab „Live“ und leg los.</div>`;
     return;
   }
   const loggedIn = !!cloud.user;
@@ -1050,10 +1052,33 @@ document.querySelectorAll("nav button").forEach((b) => b.addEventListener("click
 if (!navigator.bluetooth) $("noBt").classList.remove("hidden");
 setStatus("idle", "Nicht verbunden");
 $("btnConnect").addEventListener("click", connect);
+// Demo-Modus nur zum Testen: App mit ?demo in der Adresse öffnen
+if (new URLSearchParams(location.search).has("demo")) $("btnDemo").classList.remove("hidden");
 $("btnDemo").addEventListener("click", startDemo);
 $("btnHr").addEventListener("click", connectHr);
-$("btnDisconnect").addEventListener("click", disconnect);
-$("btnFinish").addEventListener("click", async () => {
+
+// Während einer Aufzeichnung muss der Knopf gedrückt gehalten werden – ein versehentliches
+// Antippen (z. B. beim Scrollen) beendet die Einheit nicht. Scrollen bricht das Halten ab.
+const HOLD_MS = 1200;
+function holdToConfirm(btn, action) {
+  let timer = null, fired = false;
+  btn.style.setProperty("--hold-ms", HOLD_MS + "ms");
+  const cancel = () => { clearTimeout(timer); timer = null; btn.classList.remove("holding"); };
+  btn.addEventListener("pointerdown", () => {
+    if (btn.disabled || !session) return;
+    btn.classList.add("holding");
+    timer = setTimeout(() => { cancel(); fired = true; action(); }, HOLD_MS);
+  });
+  for (const ev of ["pointerup", "pointerleave", "pointercancel"]) btn.addEventListener(ev, cancel);
+  btn.addEventListener("contextmenu", (e) => e.preventDefault());
+  btn.addEventListener("click", () => {
+    if (fired) { fired = false; return; } // Klick nach erfolgreichem Halten
+    if (!session) return action();
+    $("hint").textContent = `Zum ${btn.textContent === "Trennen" ? "Trennen" : "Beenden"} den Knopf gedrückt halten, bis der Balken voll ist.`;
+  });
+}
+holdToConfirm($("btnDisconnect"), disconnect);
+holdToConfirm($("btnFinish"), async () => {
   await finishManually();
   $("hint").textContent = "Einheit gespeichert. Die nächste startet automatisch beim nächsten Schlag.";
   renderLive();

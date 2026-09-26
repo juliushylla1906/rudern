@@ -103,6 +103,13 @@ main { max-width: 960px; margin: 0 auto; padding: 16px; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .btn.danger { color: var(--critical); }
 .btn:disabled { opacity: .45; cursor: default; }
+/* Gedrückt halten zum Bestätigen: Balken füllt sich, Loslassen oder Scrollen bricht ab */
+.btn.hold { position: relative; overflow: hidden; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.btn.hold::after {
+  content: ""; position: absolute; inset: 0; background: var(--accent); opacity: .3;
+  transform: scaleX(0); transform-origin: left; pointer-events: none;
+}
+.btn.hold.holding::after { transform: scaleX(1); transition: transform var(--hold-ms, 1200ms) linear; }
 .btn.small { font-size: 13px; padding: 6px 10px; border-radius: 8px; margin-top: 6px; width: 100%; }
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); }
